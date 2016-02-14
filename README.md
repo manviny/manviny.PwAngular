@@ -92,7 +92,14 @@ public function webService($event) {
             $scope.vehiculo = <?=$page->toJSON()?>; 
             $scope.vehiculo = <?=$page->getFieldsLabel->toJSON()?>; 
             console.log($scope.vehiculo)
- 
+
+            PW.service('S3', {service: 'listBuckets'})
+            .then(function(data){
+                console.debug("data",data);
+                $scope.treeData = data;                         // add empty buckets to tree first time
+                $scope.spinner = false;
+            }) 
+            
             // $scope.fields = <?=$page->fields->toJSON()?>; 
             // console.log($scope.fields)
             // console.log(fields)
