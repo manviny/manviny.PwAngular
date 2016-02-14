@@ -3,12 +3,9 @@ Needs:
 Language support   
 
 
-##To add a modules, script or style follow those instructions
-1. Open PwAngularConfig
-2. 'toastr' => 1,
-3. array( 'name' => 'toastr', 'type' => 'checkbox', 'label' => 'instalar toastr' ),
+##To add modules, scripts or styles follow those instructions
+1. Open PwAngularConfig.module. It will allow user wheter to install it     
 
-It will allow user to decide to install it  
 ```php
 
     class PwAngularConfig extends ModuleConfig { 
@@ -18,7 +15,7 @@ It will allow user to decide to install it
         public function getDefaults() {
             return array(
                 ....
-              'toastr' => 1,
+===>            'toastr' => 1,
                 ....
             );
         }
@@ -29,10 +26,28 @@ It will allow user to decide to install it
             $this->add(array(
     
                 ....
-              array( 'name' => 'toastr', 'type' => 'checkbox', 'label' => 'instalar toastr' ),
+===>            array( 'name' => 'toastr', 'type' => 'checkbox', 'label' => 'instalar toastr' ),
                 ....
 
             ));
         }
     }
 ```
+2. Open PwAngular.module
+```php
+    public function addScripts($event) {
+ 
+        ....
+        // TOASTR
+        if($this->toastr){ 
+         array_push( $styles, 'angular-toastr.min.css', '...' ); 
+         array_push( $scripts, 'angular-toastr.tpls.min.js' ); 
+         array_push( $modules, 'toastr' ); 
+        ....
+```
+
+3. Place into styles folder: angular-toastr.min.css
+4. Place into scripts folder: angular-toastr.tpls.min.js
+
+
+
