@@ -233,8 +233,9 @@ class PwAngular extends WireData implements Module, ConfigurableModule {
 
 
 	/**
-	 * Automatically loads Styles, Scripts, 
-	 * filters, directives, 
+	 * Automatically loads Styles, Scripts and inject modules
+	 * css and js files must be in styles and scripts folders respectively
+	 * to load them they should be ticked in the backend
 	 * <html ng-app="processwireApp">, <body ng-cloak>, 
 	 * var app = angular.module('processwireApp', []) 
 	 * @param [type] $event [description]
@@ -250,9 +251,9 @@ class PwAngular extends WireData implements Module, ConfigurableModule {
       	$additionalScripts = '';
 
 
-       	$styles =  array();
-       	$scripts =  array();
-       	$modules =  array();
+       	$styles =  array();			// Styles to load
+       	$scripts =  array();		// Scripts to load
+       	$modules =  array();		// Modules to inject into angular
 
        	// ANGULAR
 	    if($this->angular){ 
@@ -287,22 +288,20 @@ class PwAngular extends WireData implements Module, ConfigurableModule {
 	    }
 
 
-      	// 1.- STYLES de la configuracion
+      	// 1.- STYLES
    		foreach ($styles as $style) {
    			$additionalScripts .= "<link href='".wire("config")->urls->siteModules."PwAngular/styles/".$style."' rel='stylesheet' type='text/css' />";
    		}
 
-      	// 2.- SCRIPTS de la configuracion
+      	// 2.- SCRIPTS
    		foreach ( $scripts as $script) {
    			$additionalScripts .= "<script src='".wire("config")->urls->siteModules."PwAngular/scripts/".$script."'></script>";
    		}
 
-      	// 3.- MODULES de la configuracion
+      	// 3.- INJECT MODULES 
       	$salida = "";
-   		foreach (  $modules as $module) {
-   			// $additionalScripts .= "<script src='".wire("config")->urls->siteModules."PwAngular/scripts/".$script."'></script>";
-   			$salida = $salida .",'". $module."'";
-   		}
+   		foreach (  $modules as $module) { $salida = $salida .",'". $module."'"; }
+
       	$additionalScripts .= "<script>var app = angular.module('processwireApp', [".$salida ."]);</script>" ;
 
 
