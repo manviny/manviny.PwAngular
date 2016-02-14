@@ -1,0 +1,1896 @@
+<?php
+
+/**
+ * ProcessWire Load Angular and useful libraries
+ * 		
+ * 
+ * 		MEJORAS:
+ * 
+ * 			senPageByEmail									// envia el contenido de una pagina por email
+ *    		include '_blog.module'							// en la configuracion incluir modulos extra
+ *    		include 'p24.module'
+ * 
+ *      Carga script de angular justo antes de </head>
+ * 
+ * 		CREAR SOFT LINK EN EL SERVIDOR
+ * 		ln -s /opt/bitnami/apps/PwAngular /opt/bitnami/apps/l_conservatorio/htdocs/site/modules/PwAngular
+ * 
+ * 		Si es necesario cambiar el owner
+ *   	sudo chown bitnami:daemon /opt/bitnami/apps/l_conservatorio/htdocs/site/modules/PwAngular
+ * 
+ * 		MUY IMPORTANTE
+ *      ==============
+ *      Necesita instalado:
+ *      	- Language support ( sino falla al crear usuarios)
+ * 
+ *      El PRIMER SCRIPT de angular en _HEADER.PHP debe ir debajo de la etiqueta </HEAD>
+ * 
+ * 		ejemplo
+ *   				...
+ *       			</head>
+ *          		<script>
+ *            			app.controller('TopCtrl', function ($scope) {
+ *               		...
+ *                 	</script>
+ * 
+ * http://processwire.com
+ *
+ */
+
+class PwAngular extends WireData implements Module, ConfigurableModule {
+
+	/**
+	 * getModuleInfo is a module required by all modules to tell ProcessWire about them
+	 *
+	 * @return array
+	 *
+	 */
+	public static function getModuleInfo() {
+
+		return array(
+
+			// The module'ss title, typically a little more descriptive than the class name
+			'title' => 'PW and AngularJS', 
+
+			// version number 
+			'version' => 0.1, 
+
+			// summary is brief description of what this module is
+			'summary' => 'a clean way to use angularjs + API to use PW in javascript',
+			
+			// Optional URL to more information about the module
+			'href' => 'http://processwire.com',
+
+			// singular=true: indicates that only one instance of the module is allowed.
+			// This is usually what you want for modules that attach hooks. 
+			'singular' => true, 
+
+			// autoload=true: indicates the module should be started with ProcessWire.
+			// This is necessary for any modules that attach runtime hooks, otherwise those
+			// hooks won't get attached unless some other code calls the module on it's own.
+			// Note that autoload modules are almost always also 'singular' (seen above).
+			'autoload' => true, 
+		
+			// Optional font-awesome icon name, minus the 'fa-' part
+			'icon' => 'smile-o', 
+			);
+	}
+
+	/**
+	 * Initialize the module
+	 *
+	 * ProcessWire calls this when the module is loaded. For 'autoload' modules, this will be called
+	 * when ProcessWire's API is ready. As a result, this is a good place to attach hooks. 
+	 *
+	 */
+	public function init() {
+
+
+
+		// Automatically loads all necessary to work with angular and most used modules 
+		$this->addHookAfter('Page::render', $this, 'addScripts'); 			    
+		
+		// registerUser( $name, $email, $email2, $password, $password2 )		comprueba que no sea robot
+        $this->addHook('Page::registerUser', $this, 'registerUser');			
+
+        // contact( $name, $email, $email2, $asunto, $mensaje, $extradata )		envia mensaje al dueño de la pagina en config WireMailSMTP
+        $this->addHook('Page::contact', $this, 'contact');	
+
+        // sendEmail( $from, $to, $subject, $message )
+        $this->addHook('Page::sendEmail', $this, 'sendEmail');
+
+        // searchPages( $query )
+        $this->addHook('Page::searchPages', $this, 'searchPages');
+
+        $this->addHook('Page::S3', $this, 'S3');
+        // Para hacer pruebas
+        $this->addHook('Page::prueba', $this, 'prueba');
+
+        // Devuelve un array asociativo con los nombres de los fieldsets y los campos incluidos en el, por ej exim, obtiene, ruedasFieldSet y sus hijos
+        $this->addHook('Page::getFieldsets', $this, 'getFieldsets');
+        
+        // return an array of fields in current page with its names and labels
+        $this->addHook('Page::getFieldsLabel', $this, 'getFieldsLabel');
+
+
+
+        // COMPROBAR
+        $this->addHook('Page::loginUser', $this, 'loginUser');
+
+		$this->addHook('Page::createPage', $this, 'createPage');
+		$this->addHook('Page::getPage', $this, 'getPage');
+
+        
+		$this->addHook('Page::getChildren', $this, 'getChildren');
+        $this->addHook('Page::getUser', $this, 'getUser');
+
+        $this->addHook('ProcessPageView::pageNotFound', $this, 'webService');       
+
+		// $this->config->scripts->add($config->urls->templates . "js/pwservice.js");
+		
+	}
+
+
+
+     /**
+      * $http.post('http://ip/web-service/', {action: 'getPage', msg:'hello word!'})
+      * @param  [type] $event [description]
+      * @return [type]        [description]
+      */
+	public function webService($event) {
+
+		// Check if asking for a web service
+        $url = $event->arguments('url');
+        if ($url != '/web-service/') return; //Let pageNotFound() handle it
+		header($_SERVER['SERVER_PROTOCOL'] . ' 200 OK', true, 200);
+
+		// Get post Data
+		$request = file_get_contents('php://input');
+		$getPost = json_decode($request,true);
+		$service = $getPost['action'];
+		$d = $getPost['data'];
+
+		switch ($service) {
+
+		    // registerUser( $name, $email, $email2, $password, $password2 )    
+		    case "registerUser":									
+				$event->return =$this->registerUser($d["name"], $d["email"], $d["email2"], $d["password"], $d["password2"]);
+		        break;	
+
+		    // contact( $name, $email, $email2, $asunto, $mensaje, $extradata )    
+		    case "contact":									
+				$event->return = $this->contact($d["name"], $d["email"], $d["email2"], $d["subject"], $d["message"], $d["extradata"]);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "sendEmail":									
+				$event->return = $this->sendEmail( $d["from"], $d["to"], $d["subject"], $d["message"] );
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "searchPages":									
+				$event->return = $this->searchPages( $d["selector"] );
+		        break;		
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "getFieldsets":									
+				$event->return = $this->getFieldsets($d["page"]);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "getFieldsLabel":									
+				$event->return = $this->getFieldsLabel($d["page"]);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "S3":									
+				$event->return = $this->S3( $d["service"], $d["bucket"] );
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "prueba":									
+				$event->return = $this->prueba($d["page"], $d["subject"], $d["message"]);
+		        break;	
+
+
+
+
+
+
+
+
+		    // $http.post('http://ip/web-service/', {action: 'getPage', pageId: 1046 })
+		    case "getPage":									
+				$pageId = $getPost['pageId'];
+				$event->return =$this->get_Page($pageId);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'getChildren', pageId: 1046 })    
+		    case "getChildren":								
+				$pageId = $getPost['pageId'];
+				$event->return =$this->get_Children($pageId);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'find', selector: 'template=directivo,parent=1077' })    
+		    case "find":								
+				$selector = $getPost['selector'];
+				$event->return =$this->pages_find($selector);
+		        break;	
+
+		    // $http.post('http://ip/web-service/', {action: 'numChildren'})    
+		    case "numChildren":	
+		    	$pageId = $getPost['pageId'];					
+				$event->return = wire('pages')->get($pageId)->numChildren();
+		        break;		
+	    	default: echo "el servicio no existe";
+		}
+
+	}
+
+
+	// PROBADAS Y FUNCIONANDO
+
+
+
+	/**
+	 * Automatically loads Styles, Scripts, 
+	 * filters, directives, 
+	 * <html ng-app="processwireApp">, <body ng-cloak>, 
+	 * var app = angular.module('processwireApp', []) 
+	 * @param [type] $event [description]
+	 */
+	public function addScripts($event) {
+		$page = $event->object; 
+
+		// don't add this to the admin pages
+		if($page->template == 'admin') return;
+
+        //other mechanisms to ensure the script only loads when this module was called in the front-end
+      
+      	$additionalScripts = '';
+
+
+       	$styles =  array();
+       	$scripts =  array();
+       	$modules =  array();
+
+       	// ANGULAR
+	    if($this->angular){ 
+	     array_push( $scripts, 'angular.min.js', 'angular-route.min.js', 'angular-sanitize.min.js', 'angular-resource.min.js' ); 
+	     array_push( $modules, 'ngRoute', 'ngResource', 'ngSanitize' ); 
+	    }
+	    // UI-BOOTSTRAP
+	    if($this->ui_bootstrap){ 
+	     array_push( $scripts, 'ui-bootstrap.min.js', 'ui-bootstrap-tpls.min.js' ); 
+	     array_push( $modules, 'ui.bootstrap' ); 
+	    }
+	    // TOASTR
+	    if($this->toastr){ 
+	     array_push( $styles, 'angular-toastr.min.css' ); 
+	     array_push( $scripts, 'angular-toastr.tpls.min.js' ); 
+	     array_push( $modules, 'toastr' ); 
+	    }
+	    // ANGULAR MATERIAL
+	    if($this->material){ 
+	     array_push( $styles, 'angular-material.min.css' ); 
+	     array_push( $scripts, 'angular-animate.min.js', 'angular-aria.min.js',  'angular-material.min.js' ); 
+	     array_push( $modules, 'ngMaterial' ); 
+	    }
+	    // LODASH
+    	if($this->lodash){  array_push( $scripts, 'lodash.min.js' ); }
+    	
+	    // ONSENUI, necesita angular
+	    if($this->onsenui){ 
+	     array_push( $styles, 'onsenui.css', 'onsen-css-components.css' ); 
+	     array_push( $scripts, 'onsenui.js' ); 
+	     array_push( $modules, 'onsen' ); 
+	    }
+
+
+      	// 1.- STYLES de la configuracion
+   		foreach ($styles as $style) {
+   			$additionalScripts .= "<link href='".wire("config")->urls->siteModules."PwAngular/styles/".$style."' rel='stylesheet' type='text/css' />";
+   		}
+
+      	// 2.- SCRIPTS de la configuracion
+   		foreach ( $scripts as $script) {
+   			$additionalScripts .= "<script src='".wire("config")->urls->siteModules."PwAngular/scripts/".$script."'></script>";
+   		}
+
+      	// 3.- MODULES de la configuracion
+      	$salida = "";
+   		foreach (  $modules as $module) {
+   			// $additionalScripts .= "<script src='".wire("config")->urls->siteModules."PwAngular/scripts/".$script."'></script>";
+   			$salida = $salida .",'". $module."'";
+   		}
+      	$additionalScripts .= "<script>var app = angular.module('processwireApp', [".$salida ."]);</script>" ;
+
+
+      	// 4.- CARGA app.js con FILTROS y DIRECTIVAS Y PW
+      	$additionalScripts .= "<script src='".wire("config")->urls->siteModules."PwAngular/scripts/app.js'></script>";
+
+      	// 5. server path => /sr_cars/web-service/  OR /web-service/
+      	$additionalScripts .= "<script>var webServicePath='".wire("config")->urls->root."web-service/';</script>";
+ 
+      	
+		$event->return = str_replace('<html', '<html ng-app="processwireApp" ', $event->return); 
+		$event->return = str_replace("</head>", $additionalScripts.'</head>', $event->return); 
+		$event->return = str_replace('<body', '<body  ng-cloak ', $event->return); 
+	}
+
+	/**
+	 * MEJORAS: si el nombre existe -> poner el email purificado, HECHO
+	 * 
+	 * Crea un nuevo usuario en PW, es necesario que el formulario contenga:
+	 * <input type="text" name="email2" id="email2" ng-model="userData.email2">
+	 * <style type="text/css">#email2 { display: none; }</style>
+	 * 
+	 * @param  [type] $name      [description]
+	 * @param  [type] $email     [description]
+	 * @param  [type] $email2    [description]
+	 * @param  [type] $password  [description]
+	 * @param  [type] $password2 [description]
+	 * @return [type]            [description]
+	 */
+	protected function registerUser( $name, $email, $email2, $password, $password2 ){
+
+		$message = "";
+		/**
+		 * Check for spam and last 2 lines to the code
+		 */
+		
+		// SPAM
+		if (trim($email2) != '')  return json_encode( [ "message" => "spam"] );
+		
+		if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    		return json_encode( [ "message" => "El email no es valido"] );
+		}
+
+		// el email existe, no se puede volver a registrar
+		if(wire('users')->get("email=$email")->id ) { 
+			return json_encode( [ "message" => "El usuario ya existe"] );
+		}	
+		// el nombre de usuario esta ocupado, su usuario será el email sanitized
+		if(wire('users')->get("name=$name")->id) { 
+			$name = wire('sanitizer')->email($email);
+		}
+
+
+		// no tiene pass -> genera uno al azar
+		if($password=="") {
+			$chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-=+;:,.?";
+    		$password = substr( str_shuffle( $chars ), 0, 8 );
+    		$password2 = $password;
+		}
+		// las constraseña no coinciden
+		if($password!=$password2 )
+			return json_encode( [ "message" => "Las contrasenas no coinciden"] );
+		
+		$pass = $password;
+		$u = new User();
+
+		$u->name= wire('sanitizer')->username($name); 
+		$u->email = wire('sanitizer')->email($email);
+		$u->pass = $pass;
+		$u->addRole("guest");
+		// $u->addRole("registrado");
+		$u->language = wire('languages')->get("default");
+		$u->save();
+
+		return json_encode( ["name" => $u->name, "password" => $u->pass, "message" => $message,] );
+
+	}
+
+	/**
+	 * Envia un email al email configurado en WireSmtp
+	 * @param  [type] $name      nombre del contacto
+	 * @param  [type] $email     email del contacto
+	 * @param  [type] $email2    email robots, si no esta vacio es fake
+	 * @param  [type] $asunto    asunto del email
+	 * @param  [type] $mensaje   mensaje del email
+	 * @param  [type] $extradata telefono, direccion y otros que se guardan como json en un campo oculto de usuario que se crea desde aqui si no existe
+	 * @return [type]            [description]
+	 */
+	protected function contact( $name, $email, $email2, $subject, $message, $extradata ){
+
+		if (trim($email2) != '')  return json_encode( [ "message" => "spam"] );		// SPAM
+
+		
+		$data = wire('modules')->getModuleConfigData('WireMailSmtp');				// email and sender from WireMailSmtp config
+
+		if($extradata) $message = $message."<br>".json_encode($extradata);			// envia informacion extra del formulario
+		$this->sendEmail( $email, $data['sender_email'], $subject, $message );	
+
+		return json_encode( ["name" => $name, "message" => $message, "extradata" => $extradata,]);
+
+	}
+
+
+
+
+	/**
+	 * NEEDS wireMail SMTP module to be installed and configured
+	 */
+	protected function sendEmail( $from, $to, $subject, $message ){
+			$mail = wireMail();
+			$mail->to($to)->from($from); // all calls can be chained
+			$mail->subject($subject); 
+			// $mail->body($message);
+			$mail->bodyHTML($message); 
+			$mail->send(); 
+			return json_encode( ["from" => $from, "to" => $to, "subject" => $subject, "message" => $message,] );
+	}
+
+
+	protected function S3( $service, $bucket ){
+
+					
+		//AWS access info
+		if (!defined('awsAccessKey')) define('awsAccessKey', $this->awskeyid);
+		if (!defined('awsSecretKey')) define('awsSecretKey', $this->awskeysecret);
+					
+		//instantiate the class
+		$s3 = new S3(awsAccessKey, awsSecretKey);
+		// print_r($s3->listBuckets());
+		// $session->mys3 = $s3->listBuckets();
+
+			switch ( $service ) {
+			    case "listBuckets":			// page
+					$array = array(); 
+					$buckets = $s3->listBuckets();
+			  		foreach ( $buckets as $bucket) { array_push($array, array( "label"  => $bucket, "noLeaf"=> true ) ); }
+			  		return json_encode($array);
+				    break;
+			    case "getBucket":			// page
+					// $array = array(); 
+					$bucketContent = $s3->getBucket($bucket);
+			  		// foreach ( $buckets as $bucket) { array_push($array, array( "label"  => $bucket, "noLeaf"=> true ) ); }
+			  		return json_encode($bucketContent);
+				    break;
+				default:
+					return "Unknown service";
+			}     
+
+
+	}
+
+
+	protected function prueba( $subject, $message ){
+
+		$array = array(); 
+		foreach( wire('users')->find("template=user") as $usuario) {	
+			if(  
+				!$usuario->hasRole("conservatorio") 
+				&& !$usuario->hasRole("superuser")
+				&& !$usuario->hasRole("pas")
+				&& !$usuario->hasRole("profesor")
+				&& !$usuario->hasRole("consejo")
+				&& $usuario->name!="guest"
+			) {
+				// wire('users')->delete($usuario);
+				array_push( $array, $usuario->name, $usuario->roles[1]->name ) ;
+			}
+
+		}
+		return json_encode($array);
+
+	}
+
+
+	// returns an associative array where key are Fieldset labels and values are label fields within the Fieldset 
+	protected function getFieldsets( $pageID ){
+
+
+		$pagina = wire('pages')->get($pageID);
+
+		$campo = array(); $array = array();  $temp = null;
+
+		foreach($pagina->fields as $field) {
+
+
+			if($field->type->name == "FieldtypeFieldsetOpen") {
+				$temp = $field->label;
+				$campos = array();
+			}
+			elseif($field->type->name == "FieldtypeFieldsetClose") {
+
+				$campo[$temp] = $campos;
+				array_push($array, $campo); 
+				unset($campos);
+				$temp = null;
+			}
+			else {
+				if($temp!=null){
+					unset($campo);
+					array_push($campos, $field->name); 
+				}	
+			}
+
+	    }
+
+		return json_encode($array);
+
+	}
+	
+	// return an array of fields in current page with its names and labels 
+	protected function getFieldsLabel( $pageID ){
+
+
+		$pagina = wire('pages')->get($pageID);
+		
+		$labels = array();
+
+
+		foreach($pagina->fields as $field) {
+ 			array_push($labels, array("name"  => $field->name, "label" => $field->label) );
+	    }
+
+		return json_encode($labels);
+
+	}
+
+
+	/**
+	 * Busca en paginas de PW 
+	 * 
+     *     selector = 'template=vehiculo, title|descripcion_corta*=hormigonera, marca=MAN, sort=-blog_fecha, limit=5';
+     *     PW.service('searchPages', {selector: selector})
+     *     .then(function(data){
+     *       console.debug("DATA",data); 
+     *     })   
+	 * 
+	 * @param  [type] $selector 'parent=/agenda/, sort=-blog_fecha, limit=5, blog_fecha>='. time()
+	 * @return [type]           [description]
+	 */
+	protected function searchPages($selector) {
+
+		$selector = wire("sanitizer")->text($selector);
+		try {
+			$paginas = wire('pages')->find($selector)->toJSON();
+			// $this->session->redirect('http://google.es',false);
+		} catch (Exception $e) {
+			return ("Comprobar que los campos enviados y los de la BD son del mismo tipo INT, TEXT, DATE...");
+		}
+		
+		
+		return ($paginas);
+
+	}
+
+
+
+
+
+
+	/**
+	 * =======================================================================================
+	 * REPASAR
+	 * =======================================================================================
+	 */
+
+
+
+	// HAY QUE CONMPROBARLAS
+
+
+
+	/**
+	 * 	
+	 */
+	
+	protected function get_Page($pageId) {
+	
+
+		$pagina = wire('pages')->get($pageId);
+
+		$array = array(); 
+
+        // fields to be avoided
+        // $avoid = array("FieldtypeFieldsetOpen", "FieldtypeFieldsetClose","FieldtypeFieldsetTabOpen","FieldtypeFieldsetTabClose", "FieldtypeCropImage");
+
+		$array['id'] = $pagina->id;
+		
+		foreach($pagina->fields as $field) {
+		
+			if( htmlspecialchars($pagina->get($field->name)) )	// si existe continua
+// echo ($field->type ." => ". $field->name . "\n") ;
+			switch ($field->type) {
+			    case "FieldtypePage":			// page
+					$buscar = htmlspecialchars($pagina->get($field->name));
+					$paginas = $pages->get($buscar); 
+					$array[$field->name] = $paginas->title;
+				    break;
+			    case "FieldtypeCropImage":		// crop image
+			    case "FieldtypeFile":			// File type
+					$file = array();
+					$file = $pagina->get($field->name)->getArray();
+					$array[$field->name] = array();
+					foreach ($pagina->get($field->name) as $key => $value) {
+						array_push($array[$field->name], array("file"  => $key, "description" => $value->description) );
+					}
+				    break;				    
+			    case "FieldtypePageTable":		// Page Table
+					// table elements ids
+					$elements = array();
+					$elements = $pagina->get($field->name)->getValues();
+
+					// get each page element ot table
+					$array[$field->name] = array();
+					foreach ($elements as $element) {
+			    		array_push($array[$field->name], $this->getPageFields($element) );
+					}
+				    break;
+				case "FieldtypeTextarea":			// if textarea do not strip html tags
+				case "FieldtypeTextareaLanguage":
+					$array[$field->name] = $pagina->get($field->name);
+					break;
+					
+			    default:
+					$array[$field->name] = htmlspecialchars($pagina->get($field->name));	
+			}
+
+		}
+
+		return json_encode($array);
+	}
+
+
+
+	/**
+	 * Get fields and values from a single page
+	 * @param  [type] $pagina [description]
+	 * @return [type]         [description]
+	 */
+	protected function getPageFields($pagina) {
+
+		$array = array();
+		$array['id'] = $pagina->id;
+		foreach($pagina->fields as $field) {
+
+			switch ($field->type) {
+			    case "FieldtypePage":			// page
+					$buscar = htmlspecialchars($pagina->get($field->name));
+					$paginas = $pages->get($buscar); 
+					$array[$field->name] = $paginas->title;
+				    break;
+			    case "FieldtypeCropImage":		// crop image
+			    case "FieldtypeFile":			// File type
+					$file = array();
+					$file = $pagina->get($field->name)->getArray();
+					$array[$field->name] = array();
+					foreach ($pagina->get($field->name) as $key => $value) {
+						array_push($array[$field->name], array("file"  => $key, "description" => $value->description) );
+					}
+				    break;		
+				case "FieldtypeTextarea":			// if textarea do not strip html tags
+				case "FieldtypeTextareaLanguage":
+					$array[$field->name] = $pagina->get($field->name);
+					break;
+					
+			    default:
+					$array[$field->name] = htmlspecialchars($pagina->get($field->name));
+
+			}//switch
+
+		} //for
+
+		return $array;
+	}
+
+
+	/**
+	 * [getPage description]
+	 * @param  [type] $event [description]
+	 * @return [type]        [description]
+	 */
+	public function getPage($event) {
+
+		// A - returns children of actual page
+		$pagina = $event->object; 
+
+	    // B - returns children of page with certain ID
+		if (is_int($event->arguments[0])) { $pagina->id = $event->arguments[0]; }
+		
+
+		$array = array(); 
+        // fields to be avoided
+        $avoid = array("FieldtypeFieldsetOpen", "FieldtypeFieldsetClose","FieldtypeFieldsetTabOpen","FieldtypeFieldsetTabClose");
+		$array['id'] = $pagina->id;
+		
+		foreach($pagina->fields as $field) {
+			if (!in_array($field->type, $avoid)) {
+				// si el campo no esta vacio
+				if( htmlspecialchars($pagina->get($field->name)) )
+					if($field->type == "FieldtypePage"){
+							$buscar = htmlspecialchars($pagina->get($field->name));
+							$paginas = $pages->get($buscar); 
+							$array[$field->name] = $paginas->title;
+						
+					}
+				else {
+					// if textarea do not strip html tags
+					if($field->type == "FieldtypeTextarea" || $field->type == "FieldtypeTextareaLanguage" ){$array[$field->name] = $pagina->get($field->name);}
+					else {$array[$field->name] = htmlspecialchars($pagina->get($field->name));}					
+				}
+			}
+		}
+
+		$event->return = json_encode($array);
+	}
+	
+
+	/**
+	 * $page->getChildren()
+	 * $page->getChildren(id)
+	 * $page->getChildren(selector)
+	 * @param  [ |int|string] $event 
+	 * @return json   Children fields and values of actual or desired page
+	 */
+	public function getChildren($event) {
+
+		
+	    // fields to be avoided, irrelevant in javascript
+	    $avoid = array("FieldtypeFieldsetOpen", "FieldtypeFieldsetClose","FieldtypeFieldsetTabOpen","FieldtypeFieldsetTabClose");
+
+
+		//	A -	$page->getChildren()	
+		$pagina = $event->object; 
+		$paginas = $pagina->children;	// get children
+
+		// 	B -	$page->getChildren(1044)
+		if (is_int($event->arguments[0])) { 
+			$pagina->id = $event->arguments[0]; 
+			$paginas =  wire("pages")->get($event->arguments[0])->children();
+		}
+
+
+		// 	C -	$page->getChildren('template=product')
+		if (is_string($event->arguments[0])) { 
+			$selector = $event->arguments[0]; 
+			$paginas = wire('pages')->find($selector);
+		}
+		
+
+	 
+		$arr = array(); 
+
+		// children in page
+	    foreach ($paginas as $child) {
+	 
+			$array = array(); 
+	 
+	 		// each field in child
+			foreach($child->fields as $field) {
+				$array['id'] = $child->id;
+				$array['url'] = $child->path;
+				switch ($field->type) {
+				    case "FieldtypePage":		// page
+				        $array[$field->name] = $this->getFromArrayOfPages($field->name);
+				        break;
+				    case "FieldtypePageTable":	// array of pages
+				        $array[$field->name] = $this->getFromArrayOfPages($child->get($field->name));
+				        break;
+				    case "FieldtypeTextarea":	// text area
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    case "FieldtypeTextareaLanguage":	// text area language
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    default:
+				        $array[$field->name] = htmlspecialchars($child->get($field->name));
+				        // $array[$field->name] = htmlentities($child->get($field->name));
+				        // $array[$field->name] = htmlspecialchars($child->get($field->name), ENT_QUOTES,'ISO-8859-1' );
+				}
+			}
+			array_push($arr, $array);	// push  child to main array
+	    }
+
+		$event->return = json_encode($arr);
+	}
+
+	/**
+	 * loop through the PageArray and returns its fields
+	 * @param  PageArray $paginas [description]
+	 * @return [type]          [description]
+	 */
+	protected function getFromArrayOfPages($paginas) {
+		$array = array();
+		foreach($paginas->getArray() as $pagina) {
+			array_push($array,  $this->getPageFields($pagina));
+		}
+		return ($array);
+	}
+
+
+
+
+	/**
+	 * Creates a new page ex: $page->createPage( 1077, 'mytemplate', 'mmy Title' )
+	 * @param  [type] $event (id, template, title)
+	 * @return [type]        [description]
+	 */
+	public function createPage($event) {
+
+		$parent = wire('pages')->get($event->arguments[0]); 	// parent id
+		$template = $event->arguments[1]; 						// template
+		$title = $event->arguments[2]; 							// title
+		$name =	wire('sanitizer')->pageName($title, true);		// name
+		$jsonData = json_decode($event->arguments[3]);			// Data
+
+		// Create the page
+
+	  	$p = new Page();
+
+	  	$p->template = $template;
+	  	$p->parent = $parent;
+	  	$p->title = $title; 
+	  	$p->name = $name;
+
+	  	// rest of fields
+		foreach ($jsonData as $key => $value) { 
+		    $p->set($key, $value);
+		}	  	
+
+
+	  	$p->of(false); 
+		$p->save();
+
+	}
+	
+	public function getUser($event) {
+        $array = array();
+		$array['name'] = wire("user")->name;
+		$array['language'] = "".wire("user")->language->title;
+		$event->return = json_encode($array);
+	}	
+
+
+
+	public function loginUser($event) {
+      
+
+
+		// LOGIN CON EMAIL segun ryan:
+		// https://processwire.com/talk/topic/1838-login-using-e-mail-rather-than-username-and-general-login-issues/
+		
+		// $us = $users->find("email=$email");
+		// foreach($us as $u) {
+		  // if($u->pass === $pass) {
+		    // found the right one
+		  // }
+		// }
+
+
+
+        $user = wire("sanitizer")->username($event->arguments[0]);
+        $pass = $event->arguments[1]; 
+
+        if(wire("session")->login($user, $pass)) {
+          // login successful
+			$event->return = "true";
+        }
+		$array['name'] = wire ("user")->name;
+		$array['name'] = $event->arguments[0];
+		$event->return = json_encode($array);
+
+
+		   //      wire("user")->name = wire("sanitizer")->username($event->arguments[0]);
+		   //      wire("user")->pass = $event->arguments[1]; 
+
+		   //      if(wire("session")->login(wire("user")->name, wire("user")->pass)) {
+		   //        // login successful
+					// $event->return = "true";
+		   //      }
+		   //      $event->return = "false";
+
+     }
+
+
+
+
+	
+	protected function get_Children($pageId) {
+	
+
+		$paginas = wire('pages')->get($pageId)->children;
+
+
+        // fields to be avoided
+        $avoid = array("FieldtypeFieldsetOpen", "FieldtypeFieldsetClose","FieldtypeFieldsetTabOpen","FieldtypeFieldsetTabClose");
+
+		$array['id'] = $pagina->id;
+		
+		$arr = array(); 
+		// children in page
+	    foreach ($paginas as $child) {
+	
+			$array = array(); 
+	 
+	 		// each field in child
+			foreach($child->fields as $field) { 
+				$array['id'] = $child->id;
+				$array['url'] = $child->path;
+				switch ($field->type) {
+				    case "FieldtypePage":		// page
+				        $array[$field->name] = $this->getFromArrayOfPages($field->name);
+				        break;
+				    case "FieldtypePageTable":	// array of pages
+				        $array[$field->name] = $this->getFromArrayOfPages($child->get($field->name));
+				        break;
+				    case "FieldtypeTextarea":	// text area
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    case "FieldtypeTextareaLanguage":	// text area language
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    default:
+				        $array[$field->name] = htmlspecialchars($child->get($field->name)); 
+				        // $array[$field->name] = htmlentities($child->get($field->name));
+				        // $array[$field->name] = htmlspecialchars($child->get($field->name), ENT_QUOTES,'ISO-8859-1' );
+				}
+			}
+			array_push($arr, $array);	// push  child to main array
+	    }
+		return json_encode($arr);
+	}	
+
+
+	protected function pages_find($selector) {
+	
+
+		$paginas = wire('pages')->find($selector);
+
+
+        // fields to be avoided
+        $avoid = array("FieldtypeFieldsetOpen", "FieldtypeFieldsetClose","FieldtypeFieldsetTabOpen","FieldtypeFieldsetTabClose");
+
+		$array['id'] = $pagina->id;
+		
+		$arr = array(); 
+		// children in page
+	    foreach ($paginas as $child) {
+	
+			$array = array(); 
+	 
+	 		// each field in child
+			foreach($child->fields as $field) { 
+				$array['id'] = $child->id;
+				$array['url'] = $child->path;
+				switch ($field->type) {
+				    case "FieldtypePage":		// page
+				        $array[$field->name] = $this->getFromArrayOfPages($field->name);
+				        break;
+				    case "FieldtypePageTable":	// array of pages
+				        $array[$field->name] = $this->getFromArrayOfPages($child->get($field->name));
+				        break;
+				    case "FieldtypeTextarea":	// text area
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    case "FieldtypeTextareaLanguage":	// text area language
+				        $array[$field->name] = ($child->get($field->name));
+				        break;
+				    default:
+				        $array[$field->name] = htmlspecialchars($child->get($field->name)); 
+				        // $array[$field->name] = htmlentities($child->get($field->name));
+				        // $array[$field->name] = htmlspecialchars($child->get($field->name), ENT_QUOTES,'ISO-8859-1' );
+				}
+			}
+			array_push($arr, $array);	// push  child to main array
+	    }
+		return json_encode($arr);
+	}
+
+
+	
+}
+
+
+
+/**
+* $Id$
+*
+* Copyright (c) 2007, Donovan Schonknecht.  All rights reserved.
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+*
+* - Redistributions of source code must retain the above copyright notice,
+*   this list of conditions and the following disclaimer.
+* - Redistributions in binary form must reproduce the above copyright
+*   notice, this list of conditions and the following disclaimer in the
+*   documentation and/or other materials provided with the distribution.
+*
+* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+* ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+* LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+* CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+* SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+* INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+* CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+* ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+* POSSIBILITY OF SUCH DAMAGE.
+*/
+
+/**
+* Amazon S3 PHP class
+*
+* @link http://undesigned.org.za/2007/10/22/amazon-s3-php-class
+* @version 0.2.3
+*/
+class S3 {
+	// ACL flags
+	const ACL_PRIVATE = 'private';
+	const ACL_PUBLIC_READ = 'public-read';
+	const ACL_PUBLIC_READ_WRITE = 'public-read-write';
+
+	private static $__accessKey; // AWS Access key
+	private static $__secretKey; // AWS Secret key
+
+
+	/**
+	* Constructor, used if you're not calling the class statically
+	*
+	* @param string $accessKey Access key
+	* @param string $secretKey Secret key
+	* @return void
+	*/
+	public function __construct($accessKey = null, $secretKey = null) {
+		if ($accessKey !== null && $secretKey !== null)
+			self::setAuth($accessKey, $secretKey);
+	}
+
+
+	/**
+	* Set access information
+	*
+	* @param string $accessKey Access key
+	* @param string $secretKey Secret key
+	* @return void
+	*/
+	public static function setAuth($accessKey, $secretKey) {
+		self::$__accessKey = $accessKey;
+		self::$__secretKey = $secretKey;
+	}
+
+
+	/**
+	* Get a list of buckets
+	*
+	* @param boolean $detailed Returns detailed bucket list when true
+	* @return array | false
+	*/
+	public static function listBuckets($detailed = false) {
+		$rest = new S3Request('GET', '', '');
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::listBuckets(): [%s] %s", $rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		$results = array(); //var_dump($rest->body);
+		if (!isset($rest->body->Buckets)) return $results;
+
+		if ($detailed) {
+			if (isset($rest->body->Owner, $rest->body->Owner->ID, $rest->body->Owner->DisplayName))
+			$results['owner'] = array(
+				'id' => (string)$rest->body->Owner->ID, 'name' => (string)$rest->body->Owner->ID
+			);
+			$results['buckets'] = array();
+			foreach ($rest->body->Buckets->Bucket as $b)
+				$results['buckets'][] = array(
+					'name' => (string)$b->Name, 'time' => strtotime((string)$b->CreationDate)
+				);
+		} else
+			foreach ($rest->body->Buckets->Bucket as $b) $results[] = (string)$b->Name;
+
+		return $results;
+	}
+
+
+	/*
+	* Get contents for a bucket
+	*
+	* If maxKeys is null this method will loop through truncated result sets
+	*
+	* @param string $bucket Bucket name
+	* @param string $prefix Prefix
+	* @param string $marker Marker (last file listed)
+	* @param string $maxKeys Max keys (maximum number of keys to return)
+	* @return array | false
+	*/
+	public static function getBucket($bucket, $prefix = null, $marker = null, $maxKeys = null) {
+		$rest = new S3Request('GET', $bucket, '');
+		if ($prefix !== null && $prefix !== '') $rest->setParameter('prefix', $prefix);
+		if ($marker !== null && $prefix !== '') $rest->setParameter('marker', $marker);
+		if ($maxKeys !== null && $prefix !== '') $rest->setParameter('max-keys', $maxKeys);
+		$response = $rest->getResponse();
+		if ($response->error === false && $response->code !== 200)
+			$response->error = array('code' => $response->code, 'message' => 'Unexpected HTTP status');
+		if ($response->error !== false) {
+			trigger_error(sprintf("S3::getBucket(): [%s] %s", $response->error['code'], $response->error['message']), E_USER_WARNING);
+			return false;
+		}
+
+		$results = array();
+
+		$lastMarker = null;
+		if (isset($response->body, $response->body->Contents))
+			foreach ($response->body->Contents as $c) {
+				$results[(string)$c->Key] = array(
+					'name' => (string)$c->Key,
+					'time' => strToTime((string)$c->LastModified),
+					'size' => (int)$c->Size,
+					'hash' => substr((string)$c->ETag, 1, -1)
+				);
+				$lastMarker = (string)$c->Key;
+				//$response->body->IsTruncated = 'true'; break;
+			}
+
+
+		if (isset($response->body->IsTruncated) &&
+		(string)$response->body->IsTruncated == 'false') return $results;
+
+		// Loop through truncated results if maxKeys isn't specified
+		if ($maxKeys == null && $lastMarker !== null && (string)$response->body->IsTruncated == 'true')
+		do {
+			$rest = new S3Request('GET', $bucket, '');
+			if ($prefix !== null) $rest->setParameter('prefix', $prefix);
+			$rest->setParameter('marker', $lastMarker);
+
+			if (($response = $rest->getResponse(true)) == false || $response->code !== 200) break;
+			if (isset($response->body, $response->body->Contents))
+				foreach ($response->body->Contents as $c) {
+					$results[(string)$c->Key] = array(
+						'name' => (string)$c->Key,
+						'time' => strToTime((string)$c->LastModified),
+						'size' => (int)$c->Size,
+						'hash' => substr((string)$c->ETag, 1, -1)
+					);
+					$lastMarker = (string)$c->Key;
+				}
+		} while ($response !== false && (string)$response->body->IsTruncated == 'true');
+
+		return $results;
+	}
+
+
+	/**
+	* Put a bucket
+	*
+	* @param string $bucket Bucket name
+	* @param constant $acl ACL flag
+	* @return boolean
+	*/
+	public function putBucket($bucket, $acl = self::ACL_PRIVATE) {
+		$rest = new S3Request('PUT', $bucket, '');
+		$rest->setAmzHeader('x-amz-acl', $acl);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::putBucket({$bucket}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Delete an empty bucket
+	*
+	* @param string $bucket Bucket name
+	* @return boolean
+	*/
+	public function deleteBucket($bucket = '') {
+		$rest = new S3Request('DELETE', $bucket);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 204)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::deleteBucket({$bucket}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Create input info array for putObject()
+	*
+	* @param string $file Input file
+	* @param mixed $md5sum Use MD5 hash (supply a string if you want to use your own)
+	* @return array | false
+	*/
+	public static function inputFile($file, $md5sum = true) {
+		if (!file_exists($file) || !is_file($file) || !is_readable($file)) {
+			trigger_error('S3::inputFile(): Unable to open input file: '.$file, E_USER_WARNING);
+			return false;
+		}
+		return array('file' => $file, 'size' => filesize($file),
+		'md5sum' => $md5sum !== false ? (is_string($md5sum) ? $md5sum :
+		base64_encode(md5_file($file, true))) : '');
+	}
+
+
+	/**
+	* Use a resource for input
+	*
+	* @param string $file Input file
+	* @param integer $bufferSize Input byte size
+	* @param string $md5sum MD5 hash to send (optional)
+	* @return array | false
+	*/
+	public static function inputResource(&$resource, $bufferSize, $md5sum = '') {
+		if (!is_resource($resource) || $bufferSize <= 0) {
+			trigger_error('S3::inputResource(): Invalid resource or buffer size', E_USER_WARNING);
+			return false;
+		}
+		$input = array('size' => $bufferSize, 'md5sum' => $md5sum);
+		$input['fp'] =& $resource;
+		return $input;
+	}
+
+
+	/**
+	* Put an object
+	*
+	* @param mixed $input Input data
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param constant $acl ACL constant
+	* @param array $metaHeaders Array of x-amz-meta-* headers
+	* @param string $contentType Content type
+	* @return boolean
+	*/
+	public static function putObject($input, $bucket, $uri, $acl = self::ACL_PRIVATE, $metaHeaders = array(), $contentType = null) {
+		if ($input == false) return false;
+		$rest = new S3Request('PUT', $bucket, $uri);
+
+		if (is_string($input)) $input = array(
+			'data' => $input, 'size' => strlen($input),
+			'md5sum' => base64_encode(md5($input, true))
+		);
+
+		// Data
+		if (isset($input['fp']))
+			$rest->fp =& $input['fp'];
+		elseif (isset($input['file']))
+			$rest->fp = @fopen($input['file'], 'rb');
+		elseif (isset($input['data']))
+			$rest->data = $input['data'];
+
+		// Content-Length (required)
+		if (isset($input['size']) && $input['size'] > 0)
+			$rest->size = $input['size'];
+		else {
+			if (isset($input['file']))
+				$rest->size = filesize($input['file']);
+			elseif (isset($input['data']))
+				$rest->size = strlen($input['data']);
+		}
+
+		// Content-Type
+		if ($contentType !== null)
+			$input['type'] = $contentType;
+		elseif (!isset($input['type']) && isset($input['file']))
+			$input['type'] = self::__getMimeType($input['file']);
+		else
+			$input['type'] = 'application/octet-stream';
+
+		// We need to post with the content-length and content-type, MD5 is optional
+		if ($rest->size > 0 && ($rest->fp !== false || $rest->data !== false)) {
+			$rest->setHeader('Content-Type', $input['type']);
+			if (isset($input['md5sum'])) $rest->setHeader('Content-MD5', $input['md5sum']);
+
+			$rest->setAmzHeader('x-amz-acl', $acl);
+			foreach ($metaHeaders as $h => $v) $rest->setAmzHeader('x-amz-meta-'.$h, $v);
+			$rest->getResponse();
+		} else
+			$rest->response->error = array('code' => 0, 'message' => 'Missing input parameters');
+
+		if ($rest->response->error === false && $rest->response->code !== 200)
+			$rest->response->error = array('code' => $rest->response->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->response->error !== false) {
+			trigger_error(sprintf("S3::putObject(): [%s] %s", $rest->response->error['code'], $rest->response->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Puts an object from a file (legacy function)
+	*
+	* @param string $file Input file path
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param constant $acl ACL constant
+	* @param array $metaHeaders Array of x-amz-meta-* headers
+	* @param string $contentType Content type
+	* @return boolean
+	*/
+	public static function putObjectFile($file, $bucket, $uri, $acl = self::ACL_PRIVATE, $metaHeaders = array(), $contentType = null) {
+		return self::putObject(S3::inputFile($file), $bucket, $uri, $acl, $metaHeaders, $contentType);
+	}
+
+
+	/**
+	* Put an object from a string (legacy function)
+	*
+	* @param string $string Input data
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param constant $acl ACL constant
+	* @param array $metaHeaders Array of x-amz-meta-* headers
+	* @param string $contentType Content type
+	* @return boolean
+	*/
+	public function putObjectString($string, $bucket, $uri, $acl = self::ACL_PRIVATE, $metaHeaders = array(), $contentType = 'text/plain') {
+		return self::putObject($string, $bucket, $uri, $acl, $metaHeaders, $contentType);
+	}
+
+
+	/**
+	* Get an object
+	*
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param mixed &$saveTo Filename or resource to write to
+	* @return mixed
+	*/
+	public static function getObject($bucket = '', $uri = '', $saveTo = false) {
+		$rest = new S3Request('GET', $bucket, $uri);
+		if ($saveTo !== false) {
+			if (is_resource($saveTo))
+				$rest->fp =& $saveTo;
+			else
+				if (($rest->fp = @fopen($saveTo, 'wb')) == false)
+				$rest->response->error = array('code' => 0, 'message' => 'Unable to open save file for writing: '.$saveTo);
+		}
+		if ($rest->response->error === false) $rest->getResponse();
+
+		if ($rest->response->error === false && $rest->response->code !== 200)
+			$rest->response->error = array('code' => $rest->response->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->response->error !== false) {
+			trigger_error(sprintf("S3::getObject({$bucket}, {$uri}): [%s] %s",
+			$rest->response->error['code'], $rest->response->error['message']), E_USER_WARNING);
+			return false;
+		}
+		$rest->file = realpath($saveTo);
+		return $rest->response;
+	}
+
+
+	/**
+	* Get object information
+	*
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param boolean $returnInfo Return response information
+	* @return mixed | false
+	*/
+	public static function getObjectInfo($bucket = '', $uri = '', $returnInfo = true) {
+		$rest = new S3Request('HEAD', $bucket, $uri);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && ($rest->code !== 200 && $rest->code !== 404))
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::getObjectInfo({$bucket}, {$uri}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return $rest->code == 200 ? $returnInfo ? $rest->headers : true : false;
+	}
+
+
+	/**
+	* Set logging for a bucket
+	*
+	* @param string $bucket Bucket name
+	* @param string $targetBucket Target bucket (where logs are stored)
+	* @param string $targetPrefix Log prefix (e,g; domain.com-)
+	* @return boolean
+	*/
+	public static function setBucketLogging($bucket, $targetBucket, $targetPrefix) {
+		$dom = new DOMDocument;
+		$bucketLoggingStatus = $dom->createElement('BucketLoggingStatus');
+		$bucketLoggingStatus->setAttribute('xmlns', 'http://s3.amazonaws.com/doc/2006-03-01/');
+
+		$loggingEnabled = $dom->createElement('LoggingEnabled');
+
+		$loggingEnabled->appendChild($dom->createElement('TargetBucket', $targetBucket));
+		$loggingEnabled->appendChild($dom->createElement('TargetPrefix', $targetPrefix));
+
+		// TODO: Add TargetGrants
+
+		$bucketLoggingStatus->appendChild($loggingEnabled);
+		$dom->appendChild($bucketLoggingStatus);
+
+		$rest = new S3Request('PUT', $bucket, '');
+		$rest->setParameter('logging', null);
+		$rest->data = $dom->saveXML();
+		$rest->size = strlen($rest->data);
+		$rest->setHeader('Content-Type', 'application/xml');
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::setBucketLogging({$bucket}, {$uri}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Get logging status for a bucket
+	*
+	* This will return false if logging is not enabled.
+	* Note: To enable logging, you also need to grant write access to the log group
+	*
+	* @param string $bucket Bucket name
+	* @return array | false
+	*/
+	public static function getBucketLogging($bucket = '') {
+		$rest = new S3Request('GET', $bucket, '');
+		$rest->setParameter('logging', null);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::getBucketLogging({$bucket}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		if (!isset($rest->body->LoggingEnabled)) return false; // No logging
+		return array(
+			'targetBucket' => (string)$rest->body->LoggingEnabled->TargetBucket,
+			'targetPrefix' => (string)$rest->body->LoggingEnabled->TargetPrefix,
+		);
+	}
+
+
+	/**
+	* Set object or bucket Access Control Policy
+	*
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @param array $acp Access Control Policy Data (same as the data returned from getAccessControlPolicy)
+	* @return boolean
+	*/
+	public static function setAccessControlPolicy($bucket, $uri = '', $acp = array()) {
+		$dom = new DOMDocument;
+		$dom->formatOutput = true;
+		$accessControlPolicy = $dom->createElement('AccessControlPolicy');
+		$accessControlList = $dom->createElement('AccessControlList');
+
+		// It seems the owner has to be passed along too
+		$owner = $dom->createElement('Owner');
+		$owner->appendChild($dom->createElement('ID', $acp['owner']['id']));
+		$owner->appendChild($dom->createElement('DisplayName', $acp['owner']['name']));
+		$accessControlPolicy->appendChild($owner);
+
+		foreach ($acp['acl'] as $g) {
+			$grant = $dom->createElement('Grant');
+			$grantee = $dom->createElement('Grantee');
+			$grantee->setAttribute('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance');
+			if (isset($g['id'])) { // CanonicalUser (DisplayName is omitted)
+				$grantee->setAttribute('xsi:type', 'CanonicalUser');
+				$grantee->appendChild($dom->createElement('ID', $g['id']));
+			} elseif (isset($g['email'])) { // AmazonCustomerByEmail
+				$grantee->setAttribute('xsi:type', 'AmazonCustomerByEmail');
+				$grantee->appendChild($dom->createElement('EmailAddress', $g['email']));
+			} elseif ($g['type'] == 'Group') { // Group
+				$grantee->setAttribute('xsi:type', 'Group');
+				$grantee->appendChild($dom->createElement('URI', $g['uri']));
+			}
+			$grant->appendChild($grantee);
+			$grant->appendChild($dom->createElement('Permission', $g['permission']));
+			$accessControlList->appendChild($grant);
+		}
+
+		$accessControlPolicy->appendChild($accessControlList);
+		$dom->appendChild($accessControlPolicy);
+
+		$rest = new S3Request('PUT', $bucket, '');
+		$rest->setParameter('acl', null);
+		$rest->data = $dom->saveXML();
+		$rest->size = strlen($rest->data);
+		$rest->setHeader('Content-Type', 'application/xml');
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::setAccessControlPolicy({$bucket}, {$uri}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Get object or bucket Access Control Policy
+	*
+	* Currently this will trigger an error if there is no ACL on an object (will fix soon)
+	*
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @return mixed | false
+	*/
+	public static function getAccessControlPolicy($bucket, $uri = '') {
+		$rest = new S3Request('GET', $bucket, $uri);
+		$rest->setParameter('acl', null);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 200)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::getAccessControlPolicy({$bucket}, {$uri}): [%s] %s",
+			$rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+
+		$acp = array();
+		if (isset($rest->body->Owner, $rest->body->Owner->ID, $rest->body->Owner->DisplayName)) {
+			$acp['owner'] = array(
+				'id' => (string)$rest->body->Owner->ID, 'name' => (string)$rest->body->Owner->DisplayName
+			);
+		}
+		if (isset($rest->body->AccessControlList)) {
+			$acp['acl'] = array();
+			foreach ($rest->body->AccessControlList->Grant as $grant) {
+				foreach ($grant->Grantee as $grantee) {
+					if (isset($grantee->ID, $grantee->DisplayName)) // CanonicalUser
+						$acp['acl'][] = array(
+							'type' => 'CanonicalUser',
+							'id' => (string)$grantee->ID,
+							'name' => (string)$grantee->DisplayName,
+							'permission' => (string)$grant->Permission
+						);
+					elseif (isset($grantee->EmailAddress)) // AmazonCustomerByEmail
+						$acp['acl'][] = array(
+							'type' => 'AmazonCustomerByEmail',
+							'email' => (string)$grantee->EmailAddress,
+							'permission' => (string)$grant->Permission
+						);
+					elseif (isset($grantee->URI)) // Group
+						$acp['acl'][] = array(
+							'type' => 'Group',
+							'uri' => (string)$grantee->URI,
+							'permission' => (string)$grant->Permission
+						);
+					else continue;
+				}
+			}
+		}
+		return $acp;
+	}
+
+
+	/**
+	* Delete an object
+	*
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @return mixed
+	*/
+	public static function deleteObject($bucket = '', $uri = '') {
+		$rest = new S3Request('DELETE', $bucket, $uri);
+		$rest = $rest->getResponse();
+		if ($rest->error === false && $rest->code !== 204)
+			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
+		if ($rest->error !== false) {
+			trigger_error(sprintf("S3::deleteObject(): [%s] %s", $rest->error['code'], $rest->error['message']), E_USER_WARNING);
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	* Get MIME type for file
+	*
+	* @internal Used to get mime types
+	* @param string &$file File path
+	* @return string
+	*/
+	public static function __getMimeType(&$file) {
+		$type = false;
+		// Fileinfo documentation says fileinfo_open() will use the
+		// MAGIC env var for the magic file
+		if (extension_loaded('fileinfo') && isset($_ENV['MAGIC']) &&
+		($finfo = finfo_open(FILEINFO_MIME, $_ENV['MAGIC'])) !== false) {
+			if (($type = finfo_file($finfo, $file)) !== false) {
+				// Remove the charset and grab the last content-type
+				$type = explode(' ', str_replace('; charset=', ';charset=', $type));
+				$type = array_pop($type);
+				$type = explode(';', $type);
+				$type = array_shift($type);
+			}
+			finfo_close($finfo);
+
+		// If anyone is still using mime_content_type()
+		} elseif (function_exists('mime_content_type'))
+			$type = mime_content_type($file);
+
+		if ($type !== false && strlen($type) > 0) return $type;
+
+		// Otherwise do it the old fashioned way
+		static $exts = array(
+			'jpg' => 'image/jpeg', 'gif' => 'image/gif', 'png' => 'image/png',
+			'tif' => 'image/tiff', 'tiff' => 'image/tiff', 'ico' => 'image/x-icon',
+			'swf' => 'application/x-shockwave-flash', 'pdf' => 'application/pdf',
+			'zip' => 'application/zip', 'gz' => 'application/x-gzip',
+			'tar' => 'application/x-tar', 'bz' => 'application/x-bzip',
+			'bz2' => 'application/x-bzip2', 'txt' => 'text/plain',
+			'asc' => 'text/plain', 'htm' => 'text/html', 'html' => 'text/html',
+			'xml' => 'text/xml', 'xsl' => 'application/xsl+xml',
+			'ogg' => 'application/ogg', 'mp3' => 'audio/mpeg', 'wav' => 'audio/x-wav',
+			'avi' => 'video/x-msvideo', 'mpg' => 'video/mpeg', 'mpeg' => 'video/mpeg',
+			'mov' => 'video/quicktime', 'flv' => 'video/x-flv', 'php' => 'text/x-php'
+		);
+		$ext = strToLower(pathInfo($file, PATHINFO_EXTENSION));
+		return isset($exts[$ext]) ? $exts[$ext] : 'application/octet-stream';
+	}
+
+
+	/**
+	* Generate the auth string: "AWS AccessKey:Signature"
+	*
+	* This uses the hash extension if loaded
+	*
+	* @internal Signs the request
+	* @param string $string String to sign
+	* @return string
+	*/
+	public static function __getSignature($string) {
+		return 'AWS '.self::$__accessKey.':'.base64_encode(extension_loaded('hash') ?
+		hash_hmac('sha1', $string, self::$__secretKey, true) : pack('H*', sha1(
+		(str_pad(self::$__secretKey, 64, chr(0x00)) ^ (str_repeat(chr(0x5c), 64))) .
+		pack('H*', sha1((str_pad(self::$__secretKey, 64, chr(0x00)) ^
+		(str_repeat(chr(0x36), 64))) . $string)))));
+	}
+
+
+}
+
+final class S3Request {
+	private $verb, $bucket, $uri, $resource = '', $parameters = array(),
+	$amzHeaders = array(), $headers = array(
+		'Host' => '', 'Date' => '', 'Content-MD5' => '', 'Content-Type' => ''
+	);
+	public $fp = false, $size = 0, $data = false, $response;
+
+
+	/**
+	* Constructor
+	*
+	* @param string $verb Verb
+	* @param string $bucket Bucket name
+	* @param string $uri Object URI
+	* @return mixed
+	*/
+	function __construct($verb, $bucket = '', $uri = '') {
+		$this->verb = $verb;
+		$this->bucket = strtolower($bucket);
+		$this->uri = $uri !== '' ? '/'.$uri : '/';
+
+		if ($this->bucket !== '') {
+			$this->bucket = explode('/', $this->bucket);
+			$this->resource = '/'.$this->bucket[0].$this->uri;
+			$this->headers['Host'] = $this->bucket[0].'.s3.amazonaws.com';
+			$this->bucket = implode('/', $this->bucket);
+		} else {
+			$this->headers['Host'] = 's3.amazonaws.com';
+			if (strlen($this->uri) > 1)
+				$this->resource = '/'.$this->bucket.$this->uri;
+			else $this->resource = $this->uri;
+		}
+		$this->headers['Date'] = gmdate('D, d M Y H:i:s T');
+
+		$this->response = new STDClass;
+		$this->response->error = false;
+	}
+
+
+	/**
+	* Set request parameter
+	*
+	* @param string $key Key
+	* @param string $value Value
+	* @return void
+	*/
+	public function setParameter($key, $value) {
+		$this->parameters[$key] = $value;
+	}
+
+
+	/**
+	* Set request header
+	*
+	* @param string $key Key
+	* @param string $value Value
+	* @return void
+	*/
+	public function setHeader($key, $value) {
+		$this->headers[$key] = $value;
+	}
+
+
+	/**
+	* Set x-amz-meta-* header
+	*
+	* @param string $key Key
+	* @param string $value Value
+	* @return void
+	*/
+	public function setAmzHeader($key, $value) {
+		$this->amzHeaders[$key] = $value;
+	}
+
+
+	/**
+	* Get the S3 response
+	*
+	* @return object | false
+	*/
+	public function getResponse() {
+		$query = '';
+		if (sizeof($this->parameters) > 0) {
+			$query = substr($this->uri, -1) !== '?' ? '?' : '&';
+			foreach ($this->parameters as $var => $value)
+				if ($value == null || $value == '') $query .= $var.'&';
+				else $query .= $var.'='.$value.'&';
+			$query = substr($query, 0, -1);
+			$this->uri .= $query;
+			if (isset($this->parameters['acl']) || !isset($this->parameters['logging']))
+				$this->resource .= $query;
+		}
+		$url = (extension_loaded('openssl')?'https://':'http://').$this->headers['Host'].$this->uri;
+		//var_dump($this->bucket, $this->uri, $this->resource, $url);
+
+		// Basic setup
+		$curl = curl_init();
+		curl_setopt($curl, CURLOPT_USERAGENT, 'S3/php');
+		curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 0);
+		curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, 0);
+		curl_setopt($curl, CURLOPT_URL, $url);
+
+		// Headers
+		$headers = array(); $amz = array();
+		foreach ($this->amzHeaders as $header => $value)
+			if (strlen($value) > 0) $headers[] = $header.': '.$value;
+		foreach ($this->headers as $header => $value)
+			if (strlen($value) > 0) $headers[] = $header.': '.$value;
+		foreach ($this->amzHeaders as $header => $value)
+			if (strlen($value) > 0) $amz[] = strToLower($header).':'.$value;
+		$amz = (sizeof($amz) > 0) ? "\n".implode("\n", $amz) : '';
+
+		// Authorization string
+		$headers[] = 'Authorization: ' . S3::__getSignature(
+			$this->verb."\n".
+			$this->headers['Content-MD5']."\n".
+			$this->headers['Content-Type']."\n".
+			$this->headers['Date'].$amz."\n".$this->resource
+		);
+
+		curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+		curl_setopt($curl, CURLOPT_HEADER, false);
+		curl_setopt($curl, CURLOPT_RETURNTRANSFER, false);
+		curl_setopt($curl, CURLOPT_WRITEFUNCTION, array(&$this, '__responseWriteCallback'));
+		curl_setopt($curl, CURLOPT_HEADERFUNCTION, array(&$this, '__responseHeaderCallback'));
+
+		// Request types
+		switch ($this->verb) {
+			case 'GET': break;
+			case 'PUT':
+				if ($this->fp !== false) {
+					curl_setopt($curl, CURLOPT_PUT, true);
+					curl_setopt($curl, CURLOPT_INFILE, $this->fp);
+					if ($this->size > 0)
+						curl_setopt($curl, CURLOPT_INFILESIZE, $this->size);
+				} elseif ($this->data !== false) {
+					curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
+					curl_setopt($curl, CURLOPT_POSTFIELDS, $this->data);
+					if ($this->size > 0)
+						curl_setopt($curl, CURLOPT_BUFFERSIZE, $this->size);
+				} else
+					curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
+			break;
+			case 'HEAD':
+				curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'HEAD');
+				curl_setopt($curl, CURLOPT_NOBODY, true);
+			break;
+			case 'DELETE':
+				curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'DELETE');
+			break;
+			default: break;
+		}
+
+		// Execute, grab errors
+		if (curl_exec($curl))
+			$this->response->code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+		else
+			$this->response->error = array(
+				'code' => curl_errno($curl),
+				'message' => curl_error($curl),
+				'resource' => $this->resource
+			);
+
+		@curl_close($curl);
+
+		// Parse body into XML
+		if ($this->response->error === false && isset($this->response->headers['type']) &&
+		$this->response->headers['type'] == 'application/xml' && isset($this->response->body)) {
+			$this->response->body = simplexml_load_string($this->response->body);
+
+			// Grab S3 errors
+			if (!in_array($this->response->code, array(200, 204)) &&
+			isset($this->response->body->Code, $this->response->body->Message)) {
+				$this->response->error = array(
+					'code' => (string)$this->response->body->Code,
+					'message' => (string)$this->response->body->Message
+				);
+				if (isset($this->response->body->Resource))
+					$this->response->error['resource'] = (string)$this->response->body->Resource;
+				unset($this->response->body);
+			}
+		}
+
+		// Clean up file resources
+		if ($this->fp !== false && is_resource($this->fp)) fclose($this->fp);
+
+		return $this->response;
+	}
+
+
+	/**
+	* CURL write callback
+	*
+	* @param resource &$curl CURL resource
+	* @param string &$data Data
+	* @return integer
+	*/
+	private function __responseWriteCallback(&$curl, &$data) {
+		if ($this->response->code == 200 && $this->fp !== false)
+			return fwrite($this->fp, $data);
+		else
+			$this->response->body .= $data;
+		return strlen($data);
+	}
+
+
+	/**
+	* CURL header callback
+	*
+	* @param resource &$curl CURL resource
+	* @param string &$data Data
+	* @return integer
+	*/
+	private function __responseHeaderCallback(&$curl, &$data) {
+		if (($strlen = strlen($data)) <= 2) return $strlen;
+		if (substr($data, 0, 4) == 'HTTP')
+			$this->response->code = (int)substr($data, 9, 3);
+		else {
+			list($header, $value) = explode(': ', trim($data));
+			if ($header == 'Last-Modified')
+				$this->response->headers['time'] = strtotime($value);
+			elseif ($header == 'Content-Length')
+				$this->response->headers['size'] = (int)$value;
+			elseif ($header == 'Content-Type')
+				$this->response->headers['type'] = $value;
+			elseif ($header == 'ETag')
+				$this->response->headers['hash'] = substr($value, 1, -1);
+			elseif (preg_match('/^x-amz-meta-.*$/', $header))
+				$this->response->headers[$header] = is_numeric($value) ? (int)$value : $value;
+		}
+		return $strlen;
+	}
+
+}
